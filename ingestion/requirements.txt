@@ -1,0 +1,9 @@
+langchain-community
+langchain-unstructured
+unstructured[pdf]
+sentence-transformers
+qdrant-client
+torch
+numpy
+# For Mac MPS support optimization
+accelerate

@@ -1,0 +1,7 @@
+__pycache__/
+.venv/
+.env
+*.pdf
+.DS_Store
+qdrant_storage/
+.ipynb_checkpoints/
