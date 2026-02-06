@@ -1,9 +1,10 @@
 langchain-community
+langchain-core
+langchain-qdrant
 langchain-unstructured
 unstructured[pdf]
 sentence-transformers
 qdrant-client
 torch
-numpy
-# For Mac MPS support optimization
+numpy<2
 accelerate
