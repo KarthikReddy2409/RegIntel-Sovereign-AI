@@ -21,7 +21,7 @@ def get_device():
 def process_pdf(path: str) -> List[Document]:
     print(f"Processing: {path}")
     
-    # hi_res strategy required for table extraction
+    # hi_res strategy for table extraction
     elements = partition_pdf(
         filename=path,
         strategy="hi_res",
