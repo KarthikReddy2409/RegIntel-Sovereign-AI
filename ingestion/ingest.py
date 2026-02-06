@@ -1,3 +1,9 @@
+"""
+Script to ingest PDFs into Qdrant for regulatory docs search.
+Put PDFs in data/regs/, run with: python ingestion/ingest.py
+Needs Qdrant on localhost:6333.
+"""
+
 import os
 import glob
 import torch
@@ -6,24 +12,25 @@ from langchain_core.documents import Document
 from unstructured.partition.pdf import partition_pdf
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_qdrant import Qdrant
+from qdrant_client import QdrantClient, models
 
-# Settings
-DATA_DIR = "../data/regs"
+DATA_DIR = "data/regs"
 QDRANT_HOST = "http://localhost:6333"
-COLLECTION = "regulatory_docs"
-MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"
+COLLECTION_NAME = "regulatory_docs"
+EMBEDDING_MODEL = "sentence-transformers/all-mpnet-base-v2"
 
 def get_device():
-    if torch.backends.mps.is_available(): return "mps"
-    if torch.cuda.is_available(): return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    if torch.cuda.is_available():
+        return "cuda"
     return "cpu"
 
-def process_pdf(path: str) -> List[Document]:
-    print(f"Processing: {path}")
-    
-    # hi_res strategy for table extraction
+def process_pdf(file_path: str) -> List[Document]:
+    print(f"Processing PDF: {file_path}")
+
     elements = partition_pdf(
-        filename=path,
+        filename=file_path,
         strategy="hi_res",
         infer_table_structure=True,
         chunking_strategy="by_title",
@@ -33,59 +40,69 @@ def process_pdf(path: str) -> List[Document]:
     )
 
     chunks = []
-    for el in elements:
-        meta = el.metadata.to_dict()
-        
-        doc_meta = {
-            "source": path,
-            "page": meta.get("page_number"),
-            "file": meta.get("filename"),
-            "category": el.category
+    for element in elements:
+        metadata = element.metadata.to_dict()
+
+        doc_metadata = {
+            "source": file_path,
+            "page": metadata.get("page_number"),
+            "filename": metadata.get("filename"),
+            "category": element.category,
         }
 
-        if el.category == "Table":
-            doc_meta["is_table"] = True
-            doc_meta["html"] = meta.get("text_as_html")
+        if element.category == "Table":
+            doc_metadata["is_table"] = True
+            doc_metadata["html"] = metadata.get("text_as_html")
 
-        chunks.append(Document(page_content=el.text, metadata=doc_meta))
-        
+        chunks.append(Document(
+            page_content=element.text,
+            metadata=doc_metadata
+        ))
+
     return chunks
 
 def run():
     device = get_device()
-    print(f"Device: {device.upper()}")
+    print(f"Using device: {device.upper()}")
 
-    files = glob.glob(os.path.join(DATA_DIR, "*.pdf"))
-    if not files:
-        print(f"No PDFs in {DATA_DIR}")
+    pdf_files = glob.glob(os.path.join(DATA_DIR, "*.pdf"))
+    if not pdf_files:
+        print(f"No PDFs found in {DATA_DIR}")
         return
 
-    corpus = []
-    for f in files:
+    all_chunks = []
+    for pdf_file in pdf_files:
         try:
-            corpus.extend(process_pdf(f))
+            chunks = process_pdf(pdf_file)
+            all_chunks.extend(chunks)
         except Exception as e:
-            print(f"Failed {f}: {e}")
+            print(f"Error processing {pdf_file}: {e}")
 
-    print(f"Indexing {len(corpus)} chunks...")
-    
-    emb = HuggingFaceEmbeddings(
-        model_name=MODEL_NAME,
-        model_kwargs={'device': device},
-        encode_kwargs={'normalize_embeddings': True} 
+    print(f"Extracted {len(all_chunks)} chunks")
+
+    embeddings = HuggingFaceEmbeddings(
+        model_name=EMBEDDING_MODEL,
+        model_kwargs={"device": device},
+        encode_kwargs={"normalize_embeddings": True}
     )
 
-    print("Pushing to Qdrant...")
-    Qdrant.from_documents(
-        documents=corpus,
-        embedding=emb,
-        url=QDRANT_HOST,
-        prefer_grpc=True,
-        collection_name=COLLECTION,
-        force_recreate=True, 
-        batch_size=64 
+    qdrant_client = QdrantClient(url=QDRANT_HOST)
+    qdrant_client.recreate_collection(
+        collection_name=COLLECTION_NAME,
+        vectors_config=models.VectorParams(
+            size=768,
+            distance=models.Distance.COSINE
+        )
     )
-    print("Done.")
+
+    vector_store = Qdrant(
+        client=qdrant_client,
+        collection_name=COLLECTION_NAME,
+        embeddings=embeddings
+    )
+
+    vector_store.add_documents(all_chunks)
+    print("Done ingesting to Qdrant")
 
 if __name__ == "__main__":
     run()
